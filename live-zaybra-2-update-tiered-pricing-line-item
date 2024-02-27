@@ -1,0 +1,420 @@
+const axios = require("axios")
+//Action 4 (cca 2)
+// this needs to make the line item
+exports.main = async (event, callback) => {
+
+    const finalAmount = event.inputFields['finalAmount']
+    const amountPerShareHolder = event.inputFields['amountPerStakeHolder']
+    const productID = event.inputFields['product_id']
+    const recordID = event.inputFields['hs_object_id']
+    const shareHolders = event.inputFields['stakeholder_count']
+    let discount = event.inputFields['discount_factor____']
+    const startDate = event.inputFields['subscription_start_date']
+    const stripePlan = event.inputFields['stripe_plan']
+    let subscriptionID = "";
+
+    // console.log(stripePlan)
+    // console.log(productID)
+
+    //console.log(discount)
+
+    const getProductInformation = async () => {
+        let data = JSON.stringify({
+            "properties": [
+                "name",
+                "stripe_price_id",
+                "hs_product_id",
+                "price",
+                "quantity",
+                "hs_discount_percentage",
+                "hs_recurring_billing_start_date"
+            ],
+            "filterGroups": [
+                {
+                    "filters": [
+                        {
+                            "value": `${stripePlan}`,
+                            "propertyName": "stripe_price_id",
+                            "operator": "EQ"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let config = {
+            method: 'post',
+            maxBodyLength: Infinity,
+            url: 'https://api.hubapi.com/crm/v3/objects/products/search',
+            headers: {
+                'authorization': `Bearer ${process.env.ZAYBRA_HS_KEY}`,
+                'content-type': 'application/json'
+            },
+            data : data
+        };
+        try{
+            const priceData = await axios.request(config)
+            return priceData.data.results[0]
+        }
+        catch(e){
+            console.log(e)
+            throw new Error
+        }
+
+    }
+
+
+    const createLineItem = async () => {
+        let data = null;
+
+        if (discount && startDate){
+            data = JSON.stringify({
+                "properties": {
+                    "hs_product_id": `${productID}`,
+                    "quantity": `${shareHolders}`,
+                    "price": `${amountPerShareHolder}`,
+                    "hs_discount_percentage": `${discount ? discount : null}`,
+                    "hs_recurring_billing_start_date": `${startDate}`,
+                    "stripe_price_id": `${stripePlan}`
+                },
+                "associations": [
+                    {
+                        "to": {
+                            "id": `${recordID}`
+                        },
+                        "types": [
+                            {
+                                "associationCategory": "HUBSPOT_DEFINED",
+                                "associationTypeId": 20
+                            }
+                        ]
+                    }
+                ]
+            })
+        }
+        else if (startDate && !discount){
+            data = JSON.stringify({
+                "properties": {
+                    "hs_product_id": `${productID}`,
+                    "quantity": `${shareHolders}`,
+                    "price": `${amountPerShareHolder}`,
+                    "hs_recurring_billing_start_date": `${startDate}`
+                },
+                "associations": [
+                    {
+                        "to": {
+                            "id": `${recordID}`
+                        },
+                        "types": [
+                            {
+                                "associationCategory": "HUBSPOT_DEFINED",
+                                "associationTypeId": 20
+                            }
+                        ]
+                    }
+                ]
+            });
+        }
+        else if (discount && !startDate){
+            data = JSON.stringify({
+                "properties": {
+                    "hs_product_id": `${productID}`,
+                    "quantity": `${shareHolders}`,
+                    "price": `${amountPerShareHolder}`,
+                    "hs_discount_percentage": `${discount ? discount : null}`
+                },
+                "associations": [
+                    {
+                        "to": {
+                            "id": `${recordID}`
+                        },
+                        "types": [
+                            {
+                                "associationCategory": "HUBSPOT_DEFINED",
+                                "associationTypeId": 20
+                            }
+                        ]
+                    }
+                ]
+            })
+        }
+        else{
+            data = JSON.stringify({
+                "properties": {
+                    "hs_product_id": `${productID}`,
+                    "quantity": `${shareHolders}`,
+                    "price": `${amountPerShareHolder}`
+                },
+                "associations": [
+                    {
+                        "to": {
+                            "id": `${recordID}`
+                        },
+                        "types": [
+                            {
+                                "associationCategory": "HUBSPOT_DEFINED",
+                                "associationTypeId": 20
+                            }
+                        ]
+                    }
+                ]
+            });
+        }
+
+
+        let config = {
+            method: 'post',
+            maxBodyLength: Infinity,
+            url: 'https://api.hubapi.com/crm/v3/objects/line_items',
+            headers: {
+                'authorization': `Bearer ${process.env.ZAYBRA_HS_KEY}`,
+                'content-type': 'application/json'
+            },
+            data : data
+        };
+
+        //console.log(config)
+
+        try{
+            return await axios.request(config).data
+        }
+        catch(e){
+
+            console.log(e)
+            throw new Error
+        }
+    }
+
+    const updateLineItem = async (additionalDealInfo) => {
+        let updatedProduct = await getProductInformation();
+
+
+        console.log("Updated Product:")
+        console.log(updatedProduct)
+
+        console.log("Name:")
+        console.log(additionalDealInfo.name)
+
+        let data = null;
+
+        if (discount && startDate){
+            data = JSON.stringify({
+                "properties": {
+                    "hs_product_id": `${productID}`,
+                    "quantity": `${shareHolders}`,
+                    "price": `${amountPerShareHolder}`,
+                    "hs_discount_percentage": `${discount ? discount : null}`,
+                    "hs_recurring_billing_start_date": `${startDate}`,
+                    "name": `${updatedProduct.properties['name']}`,
+                    "stripe_price_id": `${updatedProduct.properties.stripe_price_id}`
+                },
+                "associations": [
+                    {
+                        "to": {
+                            "id": `${recordID}`
+                        },
+                        "types": [
+                            {
+                                "associationCategory": "HUBSPOT_DEFINED",
+                                "associationTypeId": 20
+                            }
+                        ]
+                    }
+                ]
+            })
+        }
+        else if (startDate && !discount){
+            data = JSON.stringify({
+                "properties": {
+                    "hs_product_id": `${productID}`,
+                    "quantity": `${shareHolders}`,
+                    "price": `${amountPerShareHolder}`,
+                    "hs_recurring_billing_start_date": `${startDate}`,
+                    "name": `${updatedProduct.properties['name']}`,
+                    "stripe_price_id": `${updatedProduct.properties.stripe_price_id}`
+                },
+                "associations": [
+                    {
+                        "to": {
+                            "id": `${recordID}`
+                        },
+                        "types": [
+                            {
+                                "associationCategory": "HUBSPOT_DEFINED",
+                                "associationTypeId": 20
+                            }
+                        ]
+                    }
+                ]
+            });
+        }
+        else if (discount && !startDate){
+            data = JSON.stringify({
+                "properties": {
+                    "hs_product_id": `${productID}`,
+                    "quantity": `${shareHolders}`,
+                    "price": `${amountPerShareHolder}`,
+                    "hs_discount_percentage": `${discount ? discount : null}`,
+                    "name": `${updatedProduct.properties['name']}`,
+                    "stripe_price_id": `${updatedProduct.properties.stripe_price_id}`
+                },
+                "associations": [
+                    {
+                        "to": {
+                            "id": `${recordID}`
+                        },
+                        "types": [
+                            {
+                                "associationCategory": "HUBSPOT_DEFINED",
+                                "associationTypeId": 20
+                            }
+                        ]
+                    }
+                ]
+            })
+        }
+        else{
+            data = JSON.stringify({
+                "properties": {
+                    "hs_product_id": `${productID}`,
+                    "quantity": `${shareHolders}`,
+                    "price": `${amountPerShareHolder}`,
+                    "name": `${updatedProduct.properties['name']}`,
+                    "stripe_price_id": `${updatedProduct.properties.stripe_price_id}`
+                },
+                "associations": [
+                    {
+                        "to": {
+                            "id": `${recordID}`
+                        },
+                        "types": [
+                            {
+                                "associationCategory": "HUBSPOT_DEFINED",
+                                "associationTypeId": 20
+                            }
+                        ]
+                    }
+                ]
+            });
+        }
+
+
+        let config = {
+            method: 'patch',
+            maxBodyLength: Infinity,
+            url: `https://api.hubapi.com/crm/v3/objects/line_items/${subscriptionID}`,
+            headers: {
+                'authorization': `Bearer ${process.env.ZAYBRA_HS_KEY}`,
+                'content-type': 'application/json'
+            },
+            data : data
+        };
+
+        console.log(config)
+
+        try{
+            return await axios.request(config).data
+        }
+        catch(e){
+
+            console.log(e)
+            throw new Error
+        }
+    }
+
+    const getDealDetails = async () => {
+        let data = JSON.stringify({
+            query: `query MyQuery {
+              CRM {
+                deal(uniqueIdentifier: "hs_object_id", uniqueIdentifierValue: "${recordID}") {
+                  associations {
+                    line_item_collection__primary {
+                      items {
+                        name
+                        price
+                        quantity
+                        hs_object_id
+                        stripe_price_id
+                      }
+                    }
+                  }
+                }
+              }
+            }`,
+            variables: {}
+        });
+
+        let config = {
+            method: 'post',
+            maxBodyLength: Infinity,
+            url: 'https://api.hubapi.com/collector/graphql',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.ZAYBRA_HS_KEY}`
+            },
+            data : data
+        };
+
+        //console.log(startDate)
+
+        try{
+            const dealDetails = await axios.request(config)
+            return dealDetails.data.data.CRM.deal.associations.line_item_collection__primary.items
+        }
+        catch(e){
+            console.log(e)
+            throw new Error
+        }
+    }
+
+    // main logic
+    try{
+
+        const dealInformation = await getDealDetails();
+        console.log("DEAL INFO:")
+        console.log(dealInformation)
+        let additionalDealInfo = {}
+
+        for(let x = 0; x < dealInformation.length; x++){
+
+            //console.log(dealInformation[x])
+
+            if (dealInformation[x].stripe_price_id.toString().includes("price_")){
+                subscriptionID = dealInformation[x].hs_object_id
+                additionalDealInfo = {
+                    name: dealInformation[x].name,
+                    price_id: dealInformation[x].stripe_price_id
+                }
+
+            }
+        }
+
+        console.log("Did details work?")
+        console.log(additionalDealInfo)
+
+        if (subscriptionID !== ""){
+            const updateLine = await updateLineItem(additionalDealInfo)
+            callback({
+                outputFields: {
+                    isTrue: true
+                }
+            });
+        }
+        else{
+            callback({
+                outputFields: {
+                    isTrue: false,
+                    error: "No subscription found on existing deal."
+                }
+            });
+        }
+
+        //const createLine = await createLineItem()
+
+    }
+    catch(e){
+        console.log(e)
+        throw new Error
+    }
+
+}
