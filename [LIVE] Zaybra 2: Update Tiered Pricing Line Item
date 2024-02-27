@@ -1,0 +1,311 @@
+const axios = require('axios');
+//action #2 (CCA 1)
+exports.main = async (event, callback) => {
+
+    let shareHolders = parseInt(event.inputFields['stakeholder_count']);
+    const discount = event.inputFields['discount_factor____'];
+    const stripe_price = event.inputFields['stripe_plan']
+    
+    const productTotals = []
+	
+
+    const pricesObject = [];
+    let runningTotal = 0;
+  
+  const isEmpty = s => s === '' || s === null || s === undefined
+  
+  const getProductInformation = async () => {
+    let data = JSON.stringify({
+        "filterGroups": [
+          {
+            "filters": [
+              {
+                "value": `${stripe_price}`,
+                "propertyName": "stripe_price_id",
+                "operator": "EQ"
+              }
+            ]
+          }
+        ]
+      });
+
+      let config = {
+              method: 'post',
+              maxBodyLength: Infinity,
+              url: 'https://api.hubapi.com/crm/v3/objects/products/search',
+              headers: { 
+                      'authorization': `Bearer ${process.env.ZAYBRA_HS_KEY}`, 
+                      'content-type': 'application/json'
+              },
+              data : data
+      };
+		try{
+          	const priceData = await axios.request(config)
+            return priceData.data.results[0].id
+        }
+    catch(e){
+      console.log(e)
+      throw new Error
+    }
+     
+  }
+
+
+  const getPrices = async (priceID) => {
+
+    let config = {
+      method: 'get',
+      maxBodyLength: Infinity,
+      url: `https://api.stripe.com/v1/prices/${priceID}?expand[]=tiers`,
+      headers: {
+        'Authorization': `Bearer ${process.env.stripe_live_sk}`
+      }
+    };
+
+    try {
+      const priceList = await axios.request(config);
+
+      return priceList.data.tiers
+    } catch (e) {
+      console.log(e)
+      callback({
+        outputFields: {
+          isTrue: false
+        }
+      })
+    }
+  }
+
+ 
+  const calculateTiers = async (tiersObj) => {
+    tiersObj.sort((a, b) => a.up_to < b.up_to ? 1 : (a.up_to !== null) ? -1 : 1)
+
+    // this is the amount to "play with"
+    let shareHolderAmount = parseInt(shareHolders);
+    //let shareHolderAmount = 150;
+
+    for (let y = 0; y < tiersObj.length; y++) {
+
+      const nextInterval = y + 1;
+
+      if (y !== tiersObj.length && shareHolderAmount <= tiersObj[y].up_to && shareHolderAmount >= tiersObj[nextInterval].up_to) {
+        tiersObj[y].used = false
+      } else if (shareHolderAmount >= tiersObj[y].up_to) {
+        tiersObj[y].used = false
+      } else {
+        tiersObj[y].used = true
+      }
+    }
+
+    // const maxXAmount = tiersObj.length;
+
+    tiersObj.sort((a, b) => a.up_to > b.up_to ? 1 : (a.up_to !== null) ? -1 : 1)
+
+
+    for (let x = 0; x < tiersObj.length; x++) {
+
+      const newNumber = x + 1
+      const moreMath = x - 1 >= 0 ? x - 1 : 0;
+      let nextTier = null;
+
+      if (tiersObj[x].used === false && shareHolderAmount >= 1) {
+
+        console.log("Incoming Shareholder Amount: " + shareHolderAmount)
+
+        console.log("RUNNING TOTAL : " + runningTotal)
+        console.log("Current Tiers Up to: " + tiersObj[x].up_to)
+        if (x !== tiersObj.length) {
+
+
+
+          if (shareHolderAmount === 75){
+            console.log("HERE")
+          }
+
+          nextTier = tiersObj[newNumber]
+          let previousTier = (x >= 1) ? tiersObj[x-1] : null
+
+
+          if (tiersObj[x].flat_amount !== null) {
+
+            if (shareHolderAmount <= tiersObj[x].up_to){
+              runningTotal = tiersObj[x].flat_amount
+              return
+            }
+
+            let price = parseFloat(tiersObj[x].flat_amount)
+
+            console.log("RECORDING FLAT AMOUNT OF " + price)
+            let difference = null
+
+            if (shareHolderAmount <= (parseInt(tiersObj[x].up_to))) {
+              difference = shareHolderAmount
+              console.log("Difference is : " + difference)
+              shareHolderAmount = 0
+            } else {
+              difference = parseInt(tiersObj[x].up_to)
+              shareHolderAmount = shareHolderAmount - difference
+            }
+
+            // console.log("Calculated Amount to Add to Total for " + difference + " folks is : " + (runningTotal + price))
+            // console.log("Recording Base Amount for " + difference + " folks. The difference between the two tiers is : " + difference)
+
+            runningTotal = runningTotal + price
+            tiersObj[x].used = true
+          } else if (shareHolderAmount <= tiersObj[x].up_to && shareHolderAmount >= nextTier.up_to) {
+
+            let price = parseFloat(tiersObj[x].unit_amount)
+
+            let difference = null;
+
+            if (nextTier.up_to === null ){
+              difference = parseInt(tiersObj[x].up_to) - parseInt(tiersObj[moreMath].up_to)
+            }
+            else{
+              difference = parseInt(tiersObj[x].up_to) - shareHolderAmount
+            }
+
+            if (difference <= -1) {
+              runningTotal = runningTotal + (shareHolderAmount * price)
+              shareHolderAmount = 0
+            } else {
+              shareHolderAmount = shareHolderAmount - difference
+              runningTotal = runningTotal + (difference * price)
+            }
+
+            tiersObj[x].used = true
+
+          } else if (shareHolderAmount >= 1 && tiersObj[x].unit_amount !== null) {
+
+              let price = parseFloat(tiersObj[x].unit_amount)
+
+              if(!isEmpty(tiersObj[x].up_to)){
+                console.log("Next Tier Up To: " + parseInt(nextTier.up_to))
+              }
+
+              console.log("RECORDING NORMAL AMOUNT FOR INTERVAL " + x + ". The max Interval amount is " + tiersObj.length)
+
+              let difference = null;
+
+              if (shareHolderAmount >= tiersObj[x].up_to && x !== tiersObj.length && tiersObj[x].up_to !== null) {
+
+                if (previousTier !== null && shareHolderAmount >= 1){
+                  if (shareHolderAmount - previousTier.up_to >= 0 && tiersObj[x].up_to !== null){
+
+                    if ((shareHolderAmount - previousTier.up_to) > (shareHolderAmount-tiersObj[x].up_to)){
+                      difference = tiersObj[x].up_to - previousTier.up_to
+                    }
+                    else{
+                      difference = shareHolderAmount - parseInt(tiersObj[x].up_to)
+                    }
+                  }
+              }
+
+              else if(isEmpty(nextTier.up_to) && (shareHolderAmount - tiersObj[x].up_to >= 1)){
+                difference = shareHolderAmount - parseInt(tiersObj[x].up_to)
+              }
+              else if(isEmpty(nextTier.up_to) && (shareHolderAmount - tiersObj[x].up_to <= 0)) {
+                difference = parseInt(tiersObj[x].up_to)
+              }
+              else{
+                difference = parseInt(nextTier.up_to) - parseInt(tiersObj[x].up_to)
+              }
+            }
+
+            else if (shareHolderAmount <= tiersObj[x].up_to && shareHolderAmount >= tiersObj[moreMath].up_to){
+
+              if(nextTier.up_to !== null){
+                if (nextTier.up_to >= shareHolderAmount && shareHolderAmount >= previousTier.up_to){
+                  difference = tiersObj[x].up_to - previousTier.up_to
+                }
+                else if(nextTier.up_to >= shareHolderAmount){
+                  //difference = tiersObj[x].up_to - shareHolderAmount
+                  difference = nextTier.up_to - tiersObj[x].up_to
+                }
+                else{
+                  difference = nextTier.up_to - tiersObj[x].up_to
+                }
+              }
+              else{
+                difference = shareHolderAmount - tiersObj[x].up_to
+              }
+
+            }
+
+            else {
+              if(tiersObj[x].up_to !== null){
+                difference = parseInt(tiersObj[x].up_to - tiersObj[moreMath].up_to)
+              }
+              else{
+                difference = shareHolderAmount
+              }
+            }
+
+            if (difference <= -1 || difference >= shareHolderAmount) {
+
+              console.log("Calculated Amount to Add to Total for " + shareHolderAmount + " at a price of " + price + " per person is : " + (shareHolderAmount * price))
+
+              runningTotal = runningTotal + (shareHolderAmount * price)
+              shareHolderAmount = 0
+            }
+            else {
+              //console.log("Dif: " + difference)
+              console.log("Calculated Amount to Add to Total for " + difference + " at a price of " + price + " per person is : " + (difference * price))
+              console.log("Recording Unit Price for " + difference + " folks. The difference between the two tiers is : " + difference)
+
+              shareHolderAmount = shareHolderAmount - difference
+              runningTotal = runningTotal + (difference * price)
+            }
+
+            tiersObj[x].used = true
+          }
+
+        } else {
+          console.log("RECORDING ELSE")
+          let price = parseFloat(tiersObj[x.length].unit_amount)
+          console.log("Calculated Amount to Add to Total for " + shareHolderAmount + " people is : " + (parseInt(shareHolderAmount) * price))
+          runningTotal = runningTotal + (parseInt(shareHolderAmount) * price)
+        }
+
+        // console.log("Next tier:")
+        // console.log(nextTier)
+
+      } else {
+        continue
+      }
+
+      console.log("Shareholders left after deductions from X loop " + x + ":" + " " + shareHolderAmount)
+      console.log("=======================================================================")
+    }
+
+  }
+  // main logic
+  
+  try{
+    
+    const productData = await getProductInformation()
+     const pricePayload = await getPrices(stripe_price)
+
+  await calculateTiers(pricePayload)
+
+  // console.log("Shareholders Total: ")
+  // console.log(shareHolders)
+  console.log("Final Running Total: ")
+  console.log(runningTotal)
+
+    callback({
+        outputFields: {
+            finalAmount: runningTotal,
+          	amountPerStakeHolder: parseFloat(runningTotal / shareHolders) / 100,
+          	isTrue: true,
+          	product_id: productData
+        }
+    });
+  }
+  catch(e){
+    console.log(e)
+    throw new Error
+  }
+
+
+}
